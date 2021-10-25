@@ -47,21 +47,21 @@ PRE_TRAINED_MODEL = 'bert-base-multilingual-cased'
 #                                            'xlnet-base-cased'
 
 MAXTOKENS = 512
-NUM_EPOCHS = 50  # default maximum number of epochs
-BERT_EMB = 1024  # set to either 768 or 1024 for BERT-Base and BERT-Large models respectively
+NUM_EPOCHS = 400  # default maximum number of epochs
+BERT_EMB = 768  # set to either 768 or 1024 for BERT-Base and BERT-Large models respectively
 BS = 4  # batch size
-INITIAL_LR = 1e-6  # initial learning rate
+INITIAL_LR = 1e-3  # initial learning rate
 save_epochs = [1, 2, 3, 4, 5, 6, 7]  # these are the epoch numbers (starting from 1) to test the model on the test set
 # and save the model checkpoint.
-EARLY_STOP_PATIENCE = 2  # If model does not improve for this number of epochs, training stops.
+EARLY_STOP_PATIENCE = 5 # If model does not improve for this number of epochs, training stops.
 
 # Setting GPU cards to use for training the model. Make sure you read our paper to figure out if you have enough GPU
 # memory. If not, you can change all of them to 'cpu' to use CPU instead of GPU. By the way, two 24 GB GPU cards are
 # enough for current configuration, but in case of developing based on this you may need more (that's why there are
 # three cards declared here)
-CUDA_0 = 'cuda:2'
-CUDA_1 = 'cuda:3'
-CUDA_2 = 'cuda:3'
+CUDA_0 = 'cuda:0'
+CUDA_1 = 'cuda:1'
+CUDA_2 = 'cuda:2'
 
 # The function for applying the data expansion technique (DE) mentioned in our paper.
 def ensemble_data(dataset, context_size=3):
@@ -92,6 +92,9 @@ def load_data(file_name):
     except:
         print('my log: could not read file')
         exit()
+    print("This many number of rows were removed from " + file_name.split("/")[-1] + " due to having missing values: ",
+          f.shape[0] - f.dropna().shape[0])
+    f.dropna(inplace=True)
     l1_texts = f['l1_text'].values.tolist()
     l2_texts = f['l2_text'].values.tolist()
     return l1_texts, l2_texts
@@ -128,11 +131,15 @@ def feed_model(base_model, model, data_loader):
     l2_pooler_output_all = []
     for batch in data_loader:
         # transformer tokenizer
-        l1_pooler_output = base_model(batch['l1_input_ids'].to(CUDA_0), attention_mask=batch['l1_attention_mask'].to(CUDA_0))
+        l1_pooler_output = base_model(batch['l1_input_ids'].to(CUDA_0),
+                                      attention_mask=batch['l1_attention_mask'].to(CUDA_0),
+                                      return_dict=True).last_hidden_state[:, 0, :]
         outputs = model(l1_pooler_output)
-        l2_pooler_output = base_model(batch['l2_input_ids'].to(CUDA_0), attention_mask=batch['l2_attention_mask'].to(CUDA_0))
+        l2_pooler_output = base_model(batch['l2_input_ids'].to(CUDA_0),
+                                      attention_mask=batch['l2_attention_mask'].to(CUDA_0),
+                                      return_dict=True).last_hidden_state[:, 0, :]
         outputs = outputs.detach().cpu().numpy()
-        l2_pooler_output = l2_pooler_output.to('cpu').numpy()
+        l2_pooler_output = l2_pooler_output.detach().to('cpu').numpy()
         outputs_all.extend(outputs)
         l2_pooler_output_all.extend(l2_pooler_output)
         del outputs, l2_pooler_output
@@ -155,7 +162,7 @@ class MyModel(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(BERT_EMB, BERT_EMB),
             nn.LeakyReLU()
-        ).to(CUDA_1)
+        ).to(CUDA_0)
 
     def forward(self, input, **kwargs):
         l1_pooler_output = input
@@ -177,15 +184,11 @@ if __name__ == '__main__':
     logfile = open('log_file_' + args[0].split('/')[-1][:-3] + str(time.time()) + '.txt', 'w')
     myprint("Please wait for the model to download and load sub-models, getting a few warnings is OK.", logfile)
     train_l1_texts, train_l2_texts = load_data(TRAIN_PATH)
-    print(type(train_l1_texts))
-    print(train_l1_texts[0:2])
-    print(type(train_l1_texts[0]))
-    # exit()
     val_l1_texts, val_l2_texts = load_data(VAL_PATH)
     test_l1_texts, test_l2_texts = load_data(TEST_PATH)
     tokenizer = BertTokenizer.from_pretrained(PRE_TRAINED_MODEL)
     tokenizer.model_max_length = MAXTOKENS
-    train_l1_encodings = tokenizer(train_l1_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
+    train_l1_encodings = tokenizer(train_l1_texts[0:2], truncation=True, padding='max_length', max_length=MAXTOKENS)
     train_l2_encodings = tokenizer(train_l2_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
     val_l1_encodings = tokenizer(val_l1_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
     val_l2_encodings = tokenizer(val_l2_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
@@ -198,7 +201,7 @@ if __name__ == '__main__':
     val_data_loader = DataLoader(val_dataset, batch_size=BS, shuffle=False)  # shuffle False for reproducibility
     test_data_loader = DataLoader(test_dataset, batch_size=BS, shuffle=False)  # shuffle False for reproducibility
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    base_model = AutoModel.from_pretrained(PRE_TRAINED_MODEL)
+    base_model = BertModel.from_pretrained(PRE_TRAINED_MODEL).to(CUDA_0)
     model = MyModel(base_model=base_model, n_classes=2)
     # If you want to load an already fine-tuned model and continue its training, uncomment the next line.
     # model.load_state_dict(torch.load(LOAD_PATH))
@@ -210,7 +213,7 @@ if __name__ == '__main__':
                                                 num_warmup_steps=2000,
                                                 num_training_steps=total_steps)
     loss_model = nn.MSELoss()
-    best_val_f1 = None
+    best_val_err = None
     patience_counter = 0  # counter to check if patience for early stopping has been reached
 
     # Training loop:
@@ -225,17 +228,19 @@ if __name__ == '__main__':
             # l1_input_ids = batch['l1_input_ids']  # 'input_ids' are the index of tokens in model's dictionary
             # l1_attention_mask = batch['l1_attention_mask']  # 'attention_mask' indicates the non-padding tokens
             l1_pooler_output = base_model(batch['l1_input_ids'].to(CUDA_0),
-                                          attention_mask=batch['l1_attention_mask'].to(CUDA_0)).pooler_output
+                                          attention_mask=batch['l1_attention_mask'].to(CUDA_0),
+                                          return_dict=True).last_hidden_state[:, 0, :]
             outputs = model(l1_pooler_output)
             l2_pooler_output = base_model(batch['l2_input_ids'].to(CUDA_0),
-                                          attention_mask=batch['l2_attention_mask'].to(CUDA_0)).pooler_output
+                                          attention_mask=batch['l2_attention_mask'].to(CUDA_0),
+                                          return_dict=True).last_hidden_state[:, 0, :]
             loss = loss_model(outputs, l2_pooler_output)
             loss.backward()
             optim.step()
             scheduler.step()
             # current_loss += loss.item()
             outputs = outputs.detach().cpu().numpy()
-            l2_pooler_output = l2_pooler_output.to('cpu').numpy()
+            l2_pooler_output = l2_pooler_output.detach().to('cpu').numpy()
             outputs_all.extend(outputs)
             l2_pooler_output_all.extend(l2_pooler_output)
             del outputs, l2_pooler_output
@@ -250,7 +255,7 @@ if __name__ == '__main__':
         if best_val_err is None:
             best_val_err = val_err
             torch.save(model.state_dict(), (SAVE_PATH + args[0].split('/')[-1][:-3] + '_checkpoint'))
-        elif val_err <= best_val_f1:
+        elif val_err <= best_val_err:
             best_val_err = val_err
             myprint("Better Error; saving Model", logfile)
             patience_counter = 0
