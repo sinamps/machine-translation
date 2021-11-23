@@ -13,6 +13,7 @@ import pandas as pd
 import random
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report, f1_score, mean_squared_error
 import time
+from myutils import load_data, myprint, MyDataset
 # from vlad.mynextvlad import NeXtVLAD  # this imports our implementation of the NeXtVLAD layer
 # from vlad.internetnextvlad import NextVLAD  # this imports an implementation of the NeXtVLAD layer taken from
 # https://www.kaggle.com/gibalegg/mtcnn-nextvlad#NextVLAD
@@ -47,74 +48,21 @@ PRE_TRAINED_MODEL = 'bert-base-multilingual-cased'
 #                                            'xlnet-base-cased'
 
 MAXTOKENS = 512
-NUM_EPOCHS = 400  # default maximum number of epochs
+NUM_EPOCHS = 800  # default maximum number of epochs
 BERT_EMB = 768  # set to either 768 or 1024 for BERT-Base and BERT-Large models respectively
-BS = 4  # batch size
-INITIAL_LR = 1e-3  # initial learning rate
+BS = 8  # batch size
+INITIAL_LR = 1e-5  # initial learning rate
 save_epochs = [1, 2, 3, 4, 5, 6, 7]  # these are the epoch numbers (starting from 1) to test the model on the test set
 # and save the model checkpoint.
-EARLY_STOP_PATIENCE = 10  # If model does not improve for this number of epochs, training stops.
+EARLY_STOP_PATIENCE = 30  # If model does not improve for this number of epochs, training stops.
 
 # Setting GPU cards to use for training the model. Make sure you read our paper to figure out if you have enough GPU
 # memory. If not, you can change all of them to 'cpu' to use CPU instead of GPU. By the way, two 24 GB GPU cards are
 # enough for current configuration, but in case of developing based on this you may need more (that's why there are
 # three cards declared here)
-CUDA_0 = 'cuda:0'
+CUDA_0 = 'cuda:1'
 CUDA_1 = 'cuda:1'
-CUDA_2 = 'cuda:2'
-
-# The function for applying the data expansion technique (DE) mentioned in our paper.
-def ensemble_data(dataset, context_size=3):
-    new_dataset = []
-    for line in dataset:
-        data = json.loads(line)
-        if len(data['context']) > context_size:
-            data['context'] = data['context'][-context_size:]
-
-        for i in range(min(context_size, len(data['context']))):
-            d = {'label': data['label'],
-                 'response': data['response'],
-                 'context': data['context'][i:]}
-            new_dataset.append(d)
-    return new_dataset
-
-# The function for printing in both console and a given log file.
-def myprint(mystr, logfile):
-    print(mystr)
-    print(mystr, file=logfile)
-
-
-# The function for loading datasets from parallel tsv files and returning texts in lists.
-def load_data(file_name):
-    try:
-        # f = open(file_name)
-        f = pd.read_csv(file_name, sep='\t', names=['l1_text', 'l2_text'])
-    except:
-        print('my log: could not read file')
-        exit()
-    print("This many number of rows were removed from " + file_name.split("/")[-1] + " due to having missing values: ",
-          f.shape[0] - f.dropna().shape[0])
-    f.dropna(inplace=True)
-    l1_texts = f['l1_text'].values.tolist()
-    l2_texts = f['l2_text'].values.tolist()
-    return l1_texts, l2_texts
-
-
-# Overriding the Dataset class required for the use of PyTorch's data loader classes.
-class MyDataset(torch.utils.data.Dataset):
-    def __init__(self, l1_encodings, l2_encodings):
-        self.l1_encodings = l1_encodings
-        self.l2_encodings = l2_encodings
-
-    def __getitem__(self, idx):
-        item = {('l1_' + key): torch.tensor(val[idx]) for key, val in self.l1_encodings.items()}
-        item2 = {('l2_' + key): torch.tensor(val[idx]) for key, val in self.l2_encodings.items()}
-        item.update(item2)
-        # item['labels'] = torch.tensor(self.labels[idx])
-        return item
-
-    def __len__(self):
-        return len(self.l1_encodings['attention_mask'])
+CUDA_2 = 'cuda:1'
 
 
 # The function to compute and print the performance measure scores using sklearn implementations.

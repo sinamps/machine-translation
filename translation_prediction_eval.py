@@ -13,9 +13,8 @@ import pandas as pd
 import random
 from sklearn.metrics import confusion_matrix, accuracy_score, classification_report, f1_score, mean_squared_error
 import time
-# from vlad.mynextvlad import NeXtVLAD  # this imports our implementation of the NeXtVLAD layer
-# from vlad.internetnextvlad import NextVLAD  # this imports an implementation of the NeXtVLAD layer taken from
-# https://www.kaggle.com/gibalegg/mtcnn-nextvlad#NextVLAD
+from myutils import myprint, load_data, MyDataset, evaluate_model
+from myutils import MyModel
 
 # Setting manual seed for various libs for reproducibility purposes.
 torch.manual_seed(7)
@@ -29,14 +28,10 @@ torch.use_deterministic_algorithms(True)
 # CUBLAS_WORKSPACE_CONFIG=:16:8 python tbinv_earlystop.py
 # If you do not care about reproducibility, you can comment above configs and run the script without the parameter
 
-# Path to data. Make sure you edit them properly to point to your local
-# datasets.
-TRAIN_PATH = "/s/bach/h/proj/COVID-19/smps/machine_translation/mt_pcp/mbert_transformation_learner/train.tsv"
-VAL_PATH = "/s/bach/h/proj/COVID-19/smps/machine_translation/mt_pcp/mbert_transformation_learner/dev.tsv"
+
 TEST_PATH = "/s/bach/h/proj/COVID-19/smps/machine_translation/mt_pcp/mbert_transformation_learner/test.tsv"
-SAVE_PATH = "/s/lovelace/c/nobackup/iray/sinamps/tempmodels/"
-# If you want to load an already fine-tuned model and continue its training, uncomment and edit the following line.
-# LOAD_PATH = "/s/lovelace/c/nobackup/iray/sinamps/claim_project/2021-06-01_models/jun10_tbinv_ensemble_with_bigger_batch-final-epoch-15"
+LOAD_PATH = "/s/lovelace/c/nobackup/iray/sinamps/tempmodels/" \
+            "mbert_transformation_learner_(basedOnUtils)-EarlyStoppedFinal-time:1637639904.5309534"
 
 # Configuration variables to choose the pre-trained model you want to use and other training settings:
 # the pre-trained model name from huggingface transformers library names:
@@ -59,123 +54,58 @@ EARLY_STOP_PATIENCE = 10  # If model does not improve for this number of epochs,
 # memory. If not, you can change all of them to 'cpu' to use CPU instead of GPU. By the way, two 24 GB GPU cards are
 # enough for current configuration, but in case of developing based on this you may need more (that's why there are
 # three cards declared here)
-CUDA_0 = 'cuda:0'
+CUDA_0 = 'cuda:1'
 CUDA_1 = 'cuda:1'
-CUDA_2 = 'cuda:2'
-
-# The function for applying the data expansion technique (DE) mentioned in our paper.
-def ensemble_data(dataset, context_size=3):
-    new_dataset = []
-    for line in dataset:
-        data = json.loads(line)
-        if len(data['context']) > context_size:
-            data['context'] = data['context'][-context_size:]
-
-        for i in range(min(context_size, len(data['context']))):
-            d = {'label': data['label'],
-                 'response': data['response'],
-                 'context': data['context'][i:]}
-            new_dataset.append(d)
-    return new_dataset
-
-# The function for printing in both console and a given log file.
-def myprint(mystr, logfile):
-    print(mystr)
-    print(mystr, file=logfile)
+CUDA_2 = 'cuda:1'
 
 
-# The function for loading datasets from parallel tsv files and returning texts in lists.
-def load_data(file_name):
-    try:
-        # f = open(file_name)
-        f = pd.read_csv(file_name, sep='\t', names=['l1_text', 'l2_text'])
-    except:
-        print('my log: could not read file')
-        exit()
-    print("This many number of rows were removed from " + file_name.split("/")[-1] + " due to having missing values: ",
-          f.shape[0] - f.dropna().shape[0])
-    f.dropna(inplace=True)
-    l1_texts = f['l1_text'].values.tolist()
-    l2_texts = f['l2_text'].values.tolist()
-    return l1_texts, l2_texts
-
-
-# Overriding the Dataset class required for the use of PyTorch's data loader classes.
-class MyDataset(torch.utils.data.Dataset):
-    def __init__(self, l1_encodings, l2_encodings):
-        self.l1_encodings = l1_encodings
-        self.l2_encodings = l2_encodings
-
-    def __getitem__(self, idx):
-        item = {('l1_' + key): torch.tensor(val[idx]) for key, val in self.l1_encodings.items()}
-        item2 = {('l2_' + key): torch.tensor(val[idx]) for key, val in self.l2_encodings.items()}
-        item.update(item2)
-        # item['labels'] = torch.tensor(self.labels[idx])
-        return item
-
-    def __len__(self):
-        return len(self.l1_encodings['attention_mask'])
-
-
-# The function to compute and print the performance measure scores using sklearn implementations.
-def evaluate_model(target, predictions, titlestr, logfile):
-    myprint(titlestr, logfile)
-    e = mean_squared_error(target, predictions)
-    myprint("MSE Error- \n" + str(e), logfile)
-    return e
+def l2dist(a, b):
+    return sum(((a - b) ** 2))
 
 
 # The function to do a forward pass of the network.
-def feed_model(base_model, model, data_loader):
+def feed_model(base_model, model, data_loader, dataset):
     outputs_all = []
     l2_pooler_output_all = []
-    for batch in data_loader:
+    other_l2_pooler_outputs = []
+    c = 0
+    for index in range(len(dataset)):
+        row = dataset[index]
+        # print(index, row['l2_input_ids'][:20])
         # transformer tokenizer
-        l1_pooler_output = base_model(batch['l1_input_ids'].to(CUDA_0),
-                                      attention_mask=batch['l1_attention_mask'].to(CUDA_0),
+        l1_pooler_output = base_model(torch.unsqueeze(row['l1_input_ids'].to(CUDA_0), 0),
+                                      attention_mask=torch.unsqueeze(row['l1_attention_mask'].to(CUDA_0), 0),
                                       return_dict=True).last_hidden_state[:, 0, :]
-        outputs = model(l1_pooler_output)
-        l2_pooler_output = base_model(batch['l2_input_ids'].to(CUDA_0),
-                                      attention_mask=batch['l2_attention_mask'].to(CUDA_0),
+        mapped_output = model(l1_pooler_output)
+        l2_pooler_output = base_model(torch.unsqueeze(row['l2_input_ids'].to(CUDA_0), 0),
+                                      attention_mask=torch.unsqueeze(row['l2_attention_mask'].to(CUDA_0), 0),
                                       return_dict=True).last_hidden_state[:, 0, :]
-        outputs = outputs.detach().cpu().numpy()
-        l2_pooler_output = l2_pooler_output.detach().to('cpu').numpy()
-        outputs_all.extend(outputs)
-        l2_pooler_output_all.extend(l2_pooler_output)
-        del outputs, l2_pooler_output
-    return l2_pooler_output_all, outputs_all
-
-
-class MyModel(nn.Module):
-    # Each component other than the Transformer, are in a sequential layer (it is not required obviously, but it is
-    # possible to stack them with other layers if desired)
-    def __init__(self, base_model, n_classes, dropout=0.05):
-        super().__init__()
-        # self.base_model = base_model.to(CUDA_0)
-        self.transformation_learner = nn.Sequential(
-            nn.Dropout(dropout),
-            nn.Linear(BERT_EMB, BERT_EMB),
-            nn.LeakyReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(BERT_EMB, BERT_EMB),
-            nn.LeakyReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(BERT_EMB, BERT_EMB),
-            nn.LeakyReLU()
-        ).to(CUDA_0)
-
-    def forward(self, input, **kwargs):
-        l1_pooler_output = input
-        # l2 = input2
-        # if 'l1_attention_mask' in kwargs:
-        #     l1_attention_mask = kwargs['l1_attention_mask']
-            # l2_attention_mask = kwargs['l2_attention_mask']
-        # else:
-        #     print("my err: attention mask is not set, error maybe")
-        # here we use only the CLS token
-        # l1_pooler_output = self.base_model(l1.to(CUDA_0), attention_mask=l1_attention_mask.to(CUDA_0)).pooler_output
-        myoutput = self.transformation_learner(l1_pooler_output)
-        return myoutput
+        rand_index = random.sample([i for i in range(0, len(dataset)) if i not in [index]], 4)
+        for j in rand_index:
+            outj = base_model(torch.unsqueeze(dataset[j]['l2_input_ids'].to(CUDA_0), 0),
+                       attention_mask=torch.unsqueeze(dataset[j]['l2_attention_mask'].to(CUDA_0), 0),
+                       return_dict=True).last_hidden_state[:, 0, :]
+            outj = torch.squeeze(outj).detach().cpu().numpy()
+            other_l2_pooler_outputs.append(outj)
+        l2_pooler_output = torch.squeeze(l2_pooler_output).detach().cpu().numpy()
+        other_l2_pooler_outputs.append(l2_pooler_output)
+        mapped_output = mapped_output.detach().cpu().numpy()
+        dists = []
+        for x in other_l2_pooler_outputs:
+            dists.append(np.linalg.norm(x - mapped_output))
+        m = np.argmin(dists)
+        if m == 4:
+            outputs_all.append(1)
+        else:
+            outputs_all.append(0)
+        other_l2_pooler_outputs.clear()
+        dists.clear()
+        # outputs = mapped_output.detach().cpu().numpy()
+        # l2_pooler_output = l2_pooler_output.detach().to('cpu').numpy()
+        # outputs_all.extend(outputs)
+        # l2_pooler_output_all.extend(l2_pooler_output)
+        # del outputs, l2_pooler_output
+    return outputs_all
 
 
 if __name__ == '__main__':
@@ -183,39 +113,34 @@ if __name__ == '__main__':
     epochs = NUM_EPOCHS
     logfile = open('log_file_' + args[0].split('/')[-1][:-3] + str(time.time()) + '.txt', 'w')
     myprint("Please wait for the model to download and load sub-models, getting a few warnings is OK.", logfile)
-    train_l1_texts, train_l2_texts = load_data(TRAIN_PATH)
-    val_l1_texts, val_l2_texts = load_data(VAL_PATH)
     test_l1_texts, test_l2_texts = load_data(TEST_PATH)
+    # print(test_l1_texts[:10])
+    # print(test_l2_texts[:10])
+    # exit(0)
     tokenizer = BertTokenizer.from_pretrained(PRE_TRAINED_MODEL)
     tokenizer.model_max_length = MAXTOKENS
-    train_l1_encodings = tokenizer(train_l1_texts[0:2], truncation=True, padding='max_length', max_length=MAXTOKENS)
-    train_l2_encodings = tokenizer(train_l2_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
-    val_l1_encodings = tokenizer(val_l1_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
-    val_l2_encodings = tokenizer(val_l2_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
     test_l1_encodings = tokenizer(test_l1_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
     test_l2_encodings = tokenizer(test_l2_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
-    train_dataset = MyDataset(train_l1_encodings, train_l2_encodings)
-    val_dataset = MyDataset(val_l1_encodings, val_l2_encodings)
+    # print(test_l2_encodings['input_ids'][:10])
     test_dataset = MyDataset(test_l1_encodings, test_l2_encodings)
-    train_data_loader = DataLoader(train_dataset, batch_size=BS, shuffle=False)  # shuffle False for reproducibility
-    val_data_loader = DataLoader(val_dataset, batch_size=BS, shuffle=False)  # shuffle False for reproducibility
     test_data_loader = DataLoader(test_dataset, batch_size=BS, shuffle=False)  # shuffle False for reproducibility
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+    # device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     base_model = BertModel.from_pretrained(PRE_TRAINED_MODEL).to(CUDA_0)
     model = MyModel(base_model=base_model, n_classes=2)
     # If you want to load an already fine-tuned model and continue its training, uncomment the next line.
-    # model.load_state_dict(torch.load(LOAD_PATH))
-    model.train()  # take model to training mode
+    model.load_state_dict(torch.load(LOAD_PATH))
+    model.eval()  # take model to evaluation mode
     base_model.eval()
-    optim = AdamW(model.parameters(), lr=INITIAL_LR)
-    total_steps = len(train_data_loader) * epochs
-    scheduler = get_linear_schedule_with_warmup(optim,
-                                                num_warmup_steps=2000,
-                                                num_training_steps=total_steps)
-    loss_model = nn.MSELoss()
-    best_val_err = None
-    patience_counter = 0  # counter to check if patience for early stopping has been reached
 
+    total_steps = len(test_data_loader) * epochs
+    test_outputs = feed_model(base_model, model, test_data_loader, test_dataset)
+    # labels = [1 for i in range(len(test_outputs))]
+    trues = np.sum(test_outputs)
+    all = len(test_outputs)
+    acc = trues/all * 100
+    print("Accuracy = ", acc, " %")
+    # evaluate_model(labels, test_outputs, 'Test set Result', logfile)
+    exit(0)
     # Training loop:
     for epoch in range(epochs):
         print(' EPOCH {:} / {:}'.format(epoch+1, epochs))
