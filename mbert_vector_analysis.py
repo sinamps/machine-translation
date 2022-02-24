@@ -150,6 +150,6 @@ if __name__ == '__main__':
         l2_vector = base_model(batch['l2_input_ids'].to(CUDA_0),
                                       attention_mask=batch['l2_attention_mask'].to(CUDA_0),
                                       return_dict=True).last_hidden_state[:, 1, :]
-        print("Similarity between 'book' and 'کتاب' is ", cos_s(l1_vector, l2_vector))
+        print("Similarities between l1 and l2 words are ", cos_s(l1_vector, l2_vector))
     # End of main
 
