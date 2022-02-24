@@ -9,14 +9,8 @@ from transformers import BertTokenizer, BertModel, AdamW, get_linear_schedule_wi
     , BertForPreTraining, AutoModel
 from torch.utils.data import DataLoader
 import numpy as np
-import pandas as pd
 import random
-from sklearn.metrics import confusion_matrix, accuracy_score, classification_report, f1_score, mean_squared_error
-import time
 from myutils import load_data, myprint, MyDataset
-# from vlad.mynextvlad import NeXtVLAD  # this imports our implementation of the NeXtVLAD layer
-# from vlad.internetnextvlad import NextVLAD  # this imports an implementation of the NeXtVLAD layer taken from
-# https://www.kaggle.com/gibalegg/mtcnn-nextvlad#NextVLAD
 
 # Setting manual seed for various libs for reproducibility purposes.
 torch.manual_seed(7)
@@ -32,10 +26,7 @@ torch.use_deterministic_algorithms(True)
 
 # Path to data. Make sure you edit them properly to point to your local
 # datasets.
-TRAIN_PATH = "/s/bach/h/proj/COVID-19/smps/machine_translation/mt_pcp/parsinlu/all_nonrel.tsv"
-VAL_PATH = "/s/bach/h/proj/COVID-19/smps/machine_translation/mt_pcp/parsinlu/all_nonrel_dev.tsv"
-TEST_PATH = "/s/bach/h/proj/COVID-19/smps/machine_translation/mt_pcp/parsinlu/all_nonrel_test.tsv"
-SAVE_PATH = "/s/lovelace/c/nobackup/iray/sinamps/tempmodels/"
+
 # If you want to load an already fine-tuned model and continue its training, uncomment and edit the following line.
 # LOAD_PATH = "/s/lovelace/c/nobackup/iray/sinamps/claim_project/2021-06-01_models/jun10_tbinv_ensemble_with_bigger_batch-final-epoch-15"
 
@@ -65,75 +56,14 @@ CUDA_1 = 'cuda:1'
 CUDA_2 = 'cuda:1'
 
 
-# The function to compute and print the performance measure scores using sklearn implementations.
-def evaluate_model(target, predictions, titlestr, logfile):
-    myprint(titlestr, logfile)
-    e = mean_squared_error(target, predictions)
-    myprint("MSE Error- \n" + str(e), logfile)
-    return e
-
-
-# The function to do a forward pass of the network.
-def feed_model(base_model, model, data_loader):
-    outputs_all = []
-    l2_pooler_output_all = []
-    for batch in data_loader:
-        # transformer tokenizer
-        l1_pooler_output = base_model(batch['l1_input_ids'].to(CUDA_0),
-                                      attention_mask=batch['l1_attention_mask'].to(CUDA_0),
-                                      return_dict=True).last_hidden_state[:, 0, :]
-        outputs = model(l1_pooler_output)
-        l2_pooler_output = base_model(batch['l2_input_ids'].to(CUDA_0),
-                                      attention_mask=batch['l2_attention_mask'].to(CUDA_0),
-                                      return_dict=True).last_hidden_state[:, 0, :]
-        outputs = outputs.detach().cpu().numpy()
-        l2_pooler_output = l2_pooler_output.detach().to('cpu').numpy()
-        outputs_all.extend(outputs)
-        l2_pooler_output_all.extend(l2_pooler_output)
-        del outputs, l2_pooler_output
-    return l2_pooler_output_all, outputs_all
-
-
-class MyModel(nn.Module):
-    # Each component other than the Transformer, are in a sequential layer (it is not required obviously, but it is
-    # possible to stack them with other layers if desired)
-    def __init__(self, base_model, n_classes, dropout=0.05):
-        super().__init__()
-        # self.base_model = base_model.to(CUDA_0)
-        self.transformation_learner = nn.Sequential(
-            # nn.Dropout(dropout),
-            nn.Linear(BERT_EMB, BERT_EMB),
-            # nn.LeakyReLU(),
-            # nn.Dropout(dropout),
-            # nn.Linear(BERT_EMB, BERT_EMB),
-            # nn.LeakyReLU(),
-            # nn.Dropout(dropout),
-            # nn.Linear(BERT_EMB, BERT_EMB),
-            # nn.LeakyReLU()
-        ).to(CUDA_0)
-
-    def forward(self, input, **kwargs):
-        l1_pooler_output = input
-        # l2 = input2
-        # if 'l1_attention_mask' in kwargs:
-        #     l1_attention_mask = kwargs['l1_attention_mask']
-            # l2_attention_mask = kwargs['l2_attention_mask']
-        # else:
-        #     print("my err: attention mask is not set, error maybe")
-        # here we use only the CLS token
-        # l1_pooler_output = self.base_model(l1.to(CUDA_0), attention_mask=l1_attention_mask.to(CUDA_0)).pooler_output
-        myoutput = self.transformation_learner(l1_pooler_output)
-        return myoutput
-
-
 if __name__ == '__main__':
     args = sys.argv
     epochs = NUM_EPOCHS
     # logfile = open('log_file_' + args[0].split('/')[-1][:-3] + str(time.time()) + '.txt', 'w')
     # myprint("Please wait for the model to download and load sub-models, getting a few warnings is OK.", logfile)
     # train_l1_texts, train_l2_texts = load_data(TRAIN_PATH)
-    fa = ["کتاب", "کتاب"]
-    en = ["book", "food"]
+    fa = ["کتاب", "کتاب", "کتاب", "کتاب", "کتاب"]
+    en = ["کتاب", "book", "food", "notebook", "rug"]
     tokenizer = BertTokenizer.from_pretrained(PRE_TRAINED_MODEL)
     tokenizer.model_max_length = MAXTOKENS
     l1_encodings = tokenizer(fa, truncation=True, padding='max_length', max_length=MAXTOKENS)
@@ -150,6 +80,9 @@ if __name__ == '__main__':
         l2_vector = base_model(batch['l2_input_ids'].to(CUDA_0),
                                       attention_mask=batch['l2_attention_mask'].to(CUDA_0),
                                       return_dict=True).last_hidden_state[:, 1, :]
-        print("Similarities between l1 and l2 words are ", cos_s(l1_vector, l2_vector))
+        print("Similarities between words are ", cos_s(l1_vector, l2_vector))
+        print("for")
+        print(fa)
+        print(en)
     # End of main
 
