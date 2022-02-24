@@ -30,7 +30,7 @@ torch.use_deterministic_algorithms(True)
 # If you do not care about reproducibility, you can comment above configs and run the script without the parameter
 
 
-TEST_PATH = "/s/bach/h/proj/COVID-19/smps/machine_translation/mt_pcp/mbert_transformation_learner/test.tsv"
+TEST_PATH = "/s/bach/h/proj/COVID-19/smps/machine_translation/mt_pcp/parsinlu/all_nonrel_test.tsv"
 LOAD_PATH = "/s/lovelace/c/nobackup/iray/sinamps/tempmodels/mbert_transformation_learner_linear_checkpoint"
 
 # Configuration variables to choose the pre-trained model you want to use and other training settings:

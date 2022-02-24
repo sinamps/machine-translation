@@ -129,98 +129,27 @@ class MyModel(nn.Module):
 if __name__ == '__main__':
     args = sys.argv
     epochs = NUM_EPOCHS
-    logfile = open('log_file_' + args[0].split('/')[-1][:-3] + str(time.time()) + '.txt', 'w')
-    myprint("Please wait for the model to download and load sub-models, getting a few warnings is OK.", logfile)
-    train_l1_texts, train_l2_texts = load_data(TRAIN_PATH)
-    val_l1_texts, val_l2_texts = load_data(VAL_PATH)
-    test_l1_texts, test_l2_texts = load_data(TEST_PATH)
+    # logfile = open('log_file_' + args[0].split('/')[-1][:-3] + str(time.time()) + '.txt', 'w')
+    # myprint("Please wait for the model to download and load sub-models, getting a few warnings is OK.", logfile)
+    # train_l1_texts, train_l2_texts = load_data(TRAIN_PATH)
+    fa = ["کتاب", "کتاب"]
+    en = ["book", "food"]
     tokenizer = BertTokenizer.from_pretrained(PRE_TRAINED_MODEL)
     tokenizer.model_max_length = MAXTOKENS
-    train_l1_encodings = tokenizer(train_l1_texts[0:2], truncation=True, padding='max_length', max_length=MAXTOKENS)
-    train_l2_encodings = tokenizer(train_l2_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
-    val_l1_encodings = tokenizer(val_l1_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
-    val_l2_encodings = tokenizer(val_l2_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
-    test_l1_encodings = tokenizer(test_l1_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
-    test_l2_encodings = tokenizer(test_l2_texts, truncation=True, padding='max_length', max_length=MAXTOKENS)
-    train_dataset = MyDataset(train_l1_encodings, train_l2_encodings)
-    val_dataset = MyDataset(val_l1_encodings, val_l2_encodings)
-    test_dataset = MyDataset(test_l1_encodings, test_l2_encodings)
-    train_data_loader = DataLoader(train_dataset, batch_size=BS, shuffle=False)  # shuffle False for reproducibility
-    val_data_loader = DataLoader(val_dataset, batch_size=BS, shuffle=False)  # shuffle False for reproducibility
-    test_data_loader = DataLoader(test_dataset, batch_size=BS, shuffle=False)  # shuffle False for reproducibility
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+    l1_encodings = tokenizer(fa, truncation=True, padding='max_length', max_length=MAXTOKENS)
+    l2_encodings = tokenizer(en, truncation=True, padding='max_length', max_length=MAXTOKENS)
+    dataset = MyDataset(l1_encodings, l2_encodings)
+    data_loader = DataLoader(dataset, batch_size=BS, shuffle=False)  # shuffle False for reproducibility
     base_model = BertModel.from_pretrained(PRE_TRAINED_MODEL).to(CUDA_0)
-    model = MyModel(base_model=base_model, n_classes=2)
-    # If you want to load an already fine-tuned model and continue its training, uncomment the next line.
-    # model.load_state_dict(torch.load(LOAD_PATH))
-    model.train()  # take model to training mode
     base_model.eval()
-    optim = AdamW(model.parameters(), lr=INITIAL_LR)
-    total_steps = len(train_data_loader) * epochs
-    scheduler = get_linear_schedule_with_warmup(optim,
-                                                num_warmup_steps=2000,
-                                                num_training_steps=total_steps)
-    loss_model = nn.MSELoss()
-    best_val_err = None
-    patience_counter = 0  # counter to check if patience for early stopping has been reached
-
-    # Training loop:
-    for epoch in range(epochs):
-        print(' EPOCH {:} / {:}'.format(epoch+1, epochs))
-        outputs_all = []
-        l2_pooler_output_all = []
-        for step, batch in enumerate(train_data_loader):
-            if step % 100 == 0 and not step == 0:
-                print('  Batch {:>5,}  of  {:>5,}.'.format(step, len(train_data_loader)))
-            optim.zero_grad()
-            # l1_input_ids = batch['l1_input_ids']  # 'input_ids' are the index of tokens in model's dictionary
-            # l1_attention_mask = batch['l1_attention_mask']  # 'attention_mask' indicates the non-padding tokens
-            l1_pooler_output = base_model(batch['l1_input_ids'].to(CUDA_0),
-                                          attention_mask=batch['l1_attention_mask'].to(CUDA_0),
-                                          return_dict=True).last_hidden_state[:, 0, :]
-            outputs = model(l1_pooler_output)
-            l2_pooler_output = base_model(batch['l2_input_ids'].to(CUDA_0),
-                                          attention_mask=batch['l2_attention_mask'].to(CUDA_0),
-                                          return_dict=True).last_hidden_state[:, 0, :]
-            loss = loss_model(outputs, l2_pooler_output)
-            loss.backward()
-            optim.step()
-            scheduler.step()
-            # current_loss += loss.item()
-            outputs = outputs.detach().cpu().numpy()
-            l2_pooler_output = l2_pooler_output.detach().to('cpu').numpy()
-            outputs_all.extend(outputs)
-            l2_pooler_output_all.extend(l2_pooler_output)
-            del outputs, l2_pooler_output
-        evaluate_model(l2_pooler_output_all, outputs_all, 'Train set Result epoch ' + str(epoch+1), logfile)
-        del l2_pooler_output_all, outputs_all
-        model.eval()
-        val_l2s, val_outputs = feed_model(base_model, model, val_data_loader)
-        val_err = evaluate_model(val_l2s, val_outputs, 'Validation set Result epoch ' + str(epoch+1), logfile)
-        del val_l2s, val_outputs
-        myprint("------------------------------- Val Error at epoch " + str(epoch+1) + " : " + str(val_err), logfile)
-        # The early stopping logic:
-        if best_val_err is None:
-            best_val_err = val_err
-            torch.save(model.state_dict(), (SAVE_PATH + args[0].split('/')[-1][:-3] + '_checkpoint'))
-        elif val_err <= best_val_err:
-            best_val_err = val_err
-            myprint("Better Error; saving Model", logfile)
-            patience_counter = 0
-            torch.save(model.state_dict(), (SAVE_PATH + args[0].split('/')[-1][:-3] + '_checkpoint'))
-        else:
-            patience_counter = patience_counter + 1
-            myprint("Worse Error; Patience Counter:" + str(patience_counter), logfile)
-            if patience_counter >= EARLY_STOP_PATIENCE:  # patience reached, stop training
-                # Load the last best model:
-                model.load_state_dict(torch.load(SAVE_PATH + args[0].split('/')[-1][:-3] + '_checkpoint'))
-                # Test the model on the testing set:
-                test_l2s, test_outputs = feed_model(base_model, model, test_data_loader)
-                evaluate_model(test_l2s, test_outputs, 'Test set Result epoch ' + str(epoch + 1), logfile)
-                torch.save(model.state_dict(), (SAVE_PATH + args[0].split('/')[-1][:-3] + '-EarlyStoppedFinal-' +
-                                                'time:' + str(time.time())))
-                break
-        model.train()
-    del train_data_loader, val_data_loader, test_data_loader
+    cos_s = torch.nn.CosineSimilarity()
+    for step, batch in enumerate(data_loader):
+        l1_vector = base_model(batch['l1_input_ids'].to(CUDA_0),
+                                      attention_mask=batch['l1_attention_mask'].to(CUDA_0),
+                                      return_dict=True).last_hidden_state[:, 1, :]
+        l2_vector = base_model(batch['l2_input_ids'].to(CUDA_0),
+                                      attention_mask=batch['l2_attention_mask'].to(CUDA_0),
+                                      return_dict=True).last_hidden_state[:, 1, :]
+        print("Similarity between 'book' and 'کتاب' is ", cos_s(l1_vector, l2_vector))
     # End of main
 

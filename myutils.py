@@ -33,7 +33,7 @@ def myprint(mystr, logfile):
 def load_data(file_name):
     try:
         # f = open(file_name)
-        f = pd.read_csv(file_name, sep='\t', names=['l1_text', 'l2_text', 'extra'])
+        f = pd.read_csv(file_name, sep='\t', names=['l1_text', 'l2_text'])#, 'extra'])
     except:
         print('my log: could not read file')
         exit()
@@ -42,6 +42,10 @@ def load_data(file_name):
     f.dropna(inplace=True)
     l1_texts = f['l1_text'].values.tolist()
     l2_texts = f['l2_text'].values.tolist()
+    print(len(l1_texts), len(l2_texts))
+    print(l1_texts[500])
+    print("\n")
+    print(l2_texts[500])
     return l1_texts, l2_texts
 
 
