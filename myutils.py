@@ -66,6 +66,18 @@ class MyDataset(torch.utils.data.Dataset):
         return len(self.l1_encodings['attention_mask'])
 
 
+class MyDataset1(torch.utils.data.Dataset):
+    def __init__(self, encodings):
+        self.encodings = encodings
+
+    def __getitem__(self, idx):
+        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        return item
+
+    def __len__(self):
+        return len(self.l1_encodings['attention_mask'])
+
+
 class MyModel(nn.Module):
     # Each component other than the Transformer, are in a sequential layer (it is not required obviously, but it is
     # possible to stack them with other layers if desired)

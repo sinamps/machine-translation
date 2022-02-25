@@ -4,13 +4,12 @@
 import sys
 import json
 import torch
-from torch import nn
 from transformers import BertTokenizer, BertModel, AdamW, get_linear_schedule_with_warmup, BertForSequenceClassification\
     , BertForPreTraining, AutoModel
 from torch.utils.data import DataLoader
 import numpy as np
 import random
-from myutils import load_data, myprint, MyDataset
+from myutils import load_data, myprint, MyDataset, MyDataset1
 
 # Setting manual seed for various libs for reproducibility purposes.
 torch.manual_seed(7)
@@ -38,7 +37,7 @@ PRE_TRAINED_MODEL = 'bert-base-multilingual-cased'
 #                                            'vinai/bertweet-base'
 #                                            'xlnet-base-cased'
 
-MAXTOKENS = 512
+MAXTOKENS = 5
 NUM_EPOCHS = 2000  # default maximum number of epochs
 BERT_EMB = 768  # set to either 768 or 1024 for BERT-Base and BERT-Large models respectively
 BS = 8  # batch size
@@ -62,27 +61,48 @@ if __name__ == '__main__':
     # logfile = open('log_file_' + args[0].split('/')[-1][:-3] + str(time.time()) + '.txt', 'w')
     # myprint("Please wait for the model to download and load sub-models, getting a few warnings is OK.", logfile)
     # train_l1_texts, train_l2_texts = load_data(TRAIN_PATH)
-    fa = ["کتاب", "کتاب", "کتاب", "کتاب", "کتاب"]
-    en = ["کتاب", "book", "food", "notebook", "rug"]
-    tokenizer = BertTokenizer.from_pretrained(PRE_TRAINED_MODEL)
-    tokenizer.model_max_length = MAXTOKENS
-    l1_encodings = tokenizer(fa, truncation=True, padding='max_length', max_length=MAXTOKENS)
-    l2_encodings = tokenizer(en, truncation=True, padding='max_length', max_length=MAXTOKENS)
-    dataset = MyDataset(l1_encodings, l2_encodings)
-    data_loader = DataLoader(dataset, batch_size=BS, shuffle=False)  # shuffle False for reproducibility
-    base_model = BertModel.from_pretrained(PRE_TRAINED_MODEL).to(CUDA_0)
-    base_model.eval()
-    cos_s = torch.nn.CosineSimilarity()
-    for step, batch in enumerate(data_loader):
-        l1_vector = base_model(batch['l1_input_ids'].to(CUDA_0),
-                                      attention_mask=batch['l1_attention_mask'].to(CUDA_0),
-                                      return_dict=True).last_hidden_state[:, 1, :]
-        l2_vector = base_model(batch['l2_input_ids'].to(CUDA_0),
-                                      attention_mask=batch['l2_attention_mask'].to(CUDA_0),
-                                      return_dict=True).last_hidden_state[:, 1, :]
-        print("Similarities between words are ", cos_s(l1_vector, l2_vector))
-        print("for")
-        print(fa)
-        print(en)
+    l1 = ["کتاب", "کتاب", "کتاب", "کتاب", "کتاب", "کتاب"]
+    l2 = ["book", "food", "notebook", "rug", "किताब", "पुस्तक"]
+    with torch.no_grad():
+        tokenizer = BertTokenizer.from_pretrained(PRE_TRAINED_MODEL)
+        tokenizer.model_max_length = MAXTOKENS
+        l1_encodings = tokenizer(l1, truncation=True, padding='max_length', max_length=MAXTOKENS)
+        l2_encodings = tokenizer(l2, truncation=True, padding='max_length', max_length=MAXTOKENS)
+        dataset = MyDataset(l1_encodings, l2_encodings)
+        data_loader = DataLoader(dataset, batch_size=BS, shuffle=False)  # shuffle False for reproducibility
+        base_model = BertModel.from_pretrained(PRE_TRAINED_MODEL).to(CUDA_0)
+        base_model.eval()
+        cos_s = torch.nn.CosineSimilarity()
+        print("\n\n\n\n")
+        for step, batch in enumerate(data_loader):
+            l1_vector = base_model(batch['l1_input_ids'].to(CUDA_0),
+                                          attention_mask=batch['l1_attention_mask'].to(CUDA_0),
+                                          return_dict=True).last_hidden_state[:, 1, :]
+            l2_vector = base_model(batch['l2_input_ids'].to(CUDA_0),
+                                          attention_mask=batch['l2_attention_mask'].to(CUDA_0),
+                                          return_dict=True).last_hidden_state[:, 1, :]
+            sims = cos_s(l1_vector, l2_vector).data.cpu().numpy()
+            print("Similarities: ")
+            for i in range(len(l1)):
+                print(l1[i], ' and ', l2[i], ' : ', sims[i])
+        while (True):
+            print("\n")
+            l1 = input("Enter the word in lang 1: ")
+            l2 = input("Enter the word in lang 2: ")
+            l1_encodings = tokenizer(l1, truncation=True, padding='max_length', max_length=MAXTOKENS)
+            l2_encodings = tokenizer(l2, truncation=True, padding='max_length', max_length=MAXTOKENS)
+            l1d = MyDataset1(l1_encodings)
+            l2d = MyDataset1(l2_encodings)
+            l1i = torch.unsqueeze(l1d[:]['input_ids'], 0)
+            l1a = torch.unsqueeze(l1d[:]['attention_mask'], 0)
+            l2i = torch.unsqueeze(l2d[:]['input_ids'], 0)
+            l2a = torch.unsqueeze(l2d[:]['attention_mask'], 0)
+            l1_vector = base_model(l1i.to(CUDA_0),
+                                   attention_mask=l1a.to(CUDA_0),
+                                   return_dict=True).last_hidden_state[:, 1, :]
+            l2_vector = base_model(l2i.to(CUDA_0),
+                                   attention_mask=l2a.to(CUDA_0),
+                                   return_dict=True).last_hidden_state[:, 1, :]
+            print("Similarities between " + l1 + " and " + l2 + " is ", cos_s(l1_vector, l2_vector).data.cpu().numpy())
     # End of main
 
